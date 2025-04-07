@@ -30,7 +30,7 @@ check_dep() {
   command -v "$1" &>/dev/null || { echo -e "${RED}[X] $1 is not installed!${NC}"; exit 1; }
 }
 
-TOOLS=(subfinder assetfinder findomain dnsx httpx gau waybackurls gauplus ffuf nuclei gf naabu katana anubis arjun getJS qsreplace unzip jq)
+TOOLS=(subfinder assetfinder findomain dnsx httpx gau waybackurls gauplus ffuf nuclei gf naabu arjun getJS qsreplace unzip jq)
 echo -e "${BLUE}[*] Checking dependencies...${NC}"
 for tool in "${TOOLS[@]}"; do
   check_dep "$tool"
@@ -56,7 +56,6 @@ subfinder -d "$DOMAIN" -all -silent -o "$OUTDIR/subdomains/subfinder.txt"
 assetfinder --subs-only "$DOMAIN" > "$OUTDIR/subdomains/assetfinder.txt"
 findomain -t "$DOMAIN" -q -o > /dev/null && mv "$DOMAIN.txt" "$OUTDIR/subdomains/findomain.txt"
 curl -s "https://crt.sh/?q=%25.$DOMAIN&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' | sort -u > "$OUTDIR/subdomains/crtsh.txt"
-anubis "$DOMAIN" > "$OUTDIR/subdomains/anubis.txt" 2>/dev/null
 cat "$OUTDIR/subdomains/"*.txt | sort -u > "$OUTDIR/subdomains/all.txt"
 echo -e "${GREEN}[✓] Total Subdomains: $(wc -l < "$OUTDIR/subdomains/all.txt")${NC}"
 
