@@ -46,7 +46,7 @@ fi
 
 DOMAIN=$1
 TS=$(date +"%Y%m%d_%H%M%S")
-OUTDIR="recon_$DOMAIN_$TS"
+OUTDIR="recon_${DOMAIN}_${TS}"
 mkdir -p "$OUTDIR"/{subdomains,live,urls,vulns,js,params,screenshots,secrets,report,ports,archive}
 echo -e "${GREEN}[+] Output Directory: $OUTDIR${NC}"
 
@@ -68,17 +68,25 @@ echo -e "${GREEN}[✓] Live Hosts: $(wc -l < "$OUTDIR/live/live.txt")${NC}"
 
 # ---------------------- Port Scanning ---------------------- #
 echo -e "${BLUE}[3] Port Scanning with Naabu...${NC}"
-naabu -l "$OUTDIR/live/live.txt" -top-ports 100 -silent -o "$OUTDIR/ports/naabu_ports.txt"
+# Convert URLs to hostnames for Naabu
+cat "$OUTDIR/live/live.txt" | sed -E 's#https?://##;s#/.*##' | sort -u > "$OUTDIR/ports/naabu_targets.txt"
+naabu -list "$OUTDIR/ports/naabu_targets.txt" -top-ports 100 -silent -o "$OUTDIR/ports/naabu_ports.txt" 2>/dev/null || echo -e "${YELLOW}[!] Naabu port scan failed or no open ports found${NC}"
 
 # ---------------------- Subdomain Takeover ---------------------- #
-echo -e "${BLUE}[4] Subdomain Takeover Check (Subzy)...${NC}"
-subzy run --targets "$OUTDIR/live/live.txt" --hide_fails > "$OUTDIR/vulns/subzy_takeover.txt"
+if command -v subzy &>/dev/null; then
+  echo -e "${BLUE}[4] Subdomain Takeover Check (Subzy)...${NC}"
+  subzy run --targets "$OUTDIR/live/live.txt" --hide_fails > "$OUTDIR/vulns/subzy_takeover.txt"
+else
+  echo -e "${YELLOW}[!] Subzy not installed, skipping takeover check${NC}"
+fi
 
 # ---------------------- URL Collection ---------------------- #
 echo -e "${BLUE}[5] Gathering URLs (gau, waybackurls, gauplus)...${NC}"
-gau "$DOMAIN" > "$OUTDIR/urls/gau.txt"
-cat "$OUTDIR/subdomains/all.txt" | waybackurls > "$OUTDIR/urls/wayback.txt"
-gauplus -f "$OUTDIR/live/live.txt" > "$OUTDIR/urls/gauplus.txt"
+# Create empty gau config file to prevent warning
+touch ~/.gau.toml
+gau "$DOMAIN" > "$OUTDIR/urls/gau.txt" 2>/dev/null
+cat "$OUTDIR/subdomains/all.txt" | waybackurls > "$OUTDIR/urls/wayback.txt" 2>/dev/null
+gauplus -f "$OUTDIR/live/live.txt" > "$OUTDIR/urls/gauplus.txt" 2>/dev/null
 
 # Optional: waymore for deeper crawling
 if command -v waymore &>/dev/null; then
@@ -90,7 +98,7 @@ echo -e "${GREEN}[✓] Total URLs: $(wc -l < "$OUTDIR/urls/all.txt")${NC}"
 
 # ---------------------- JavaScript Recon ---------------------- #
 echo -e "${BLUE}[6] JavaScript Recon...${NC}"
-getJS --input "$OUTDIR/live/live.txt" --output "$OUTDIR/js/jsfiles.txt"
+getJS --input "$OUTDIR/live/live.txt" --output "$OUTDIR/js/jsfiles.txt" 2>/dev/null
 cat "$OUTDIR/js/jsfiles.txt" | grep ".js" | sort -u > "$OUTDIR/js/final_js.txt"
 
 # ---------------------- JS Secrets & Endpoints ---------------------- #
@@ -98,8 +106,8 @@ echo -e "${BLUE}[7] Analyzing JS for secrets...${NC}"
 if [ -f "LinkFinder.py" ] && [ -f "SecretFinder.py" ]; then
   mkdir -p "$OUTDIR/js/analysis"
   while read -r jsurl; do
-    python3 LinkFinder.py -i "$jsurl" -o cli >> "$OUTDIR/js/analysis/endpoints.txt"
-    python3 SecretFinder.py -i "$jsurl" -o cli >> "$OUTDIR/secrets/js_secrets.txt"
+    python3 LinkFinder.py -i "$jsurl" -o cli >> "$OUTDIR/js/analysis/endpoints.txt" 2>/dev/null
+    python3 SecretFinder.py -i "$jsurl" -o cli >> "$OUTDIR/secrets/js_secrets.txt" 2>/dev/null
   done < "$OUTDIR/js/final_js.txt"
 else
   echo -e "${YELLOW}[!] LinkFinder or SecretFinder not found.${NC}"
@@ -115,11 +123,11 @@ done
 
 # ---------------------- Parameter Discovery ---------------------- #
 echo -e "${BLUE}[9] Discovering Hidden Parameters...${NC}"
-arjun -i "$OUTDIR/live/live.txt" -t 50 -oT "$OUTDIR/params/arjun.txt"
+arjun -i "$OUTDIR/live/live.txt" -t 50 -oT "$OUTDIR/params/arjun.txt" 2>/dev/null || echo -e "${YELLOW}[!] Arjun parameter scan failed${NC}"
 
 # ---------------------- Nuclei Vulnerability Scanning ---------------------- #
 echo -e "${BLUE}[10] Nuclei Scanning...${NC}"
-nuclei -l "$OUTDIR/live/live.txt" -t ~/nuclei-templates/ -severity medium,high,critical -o "$OUTDIR/vulns/nuclei.txt" -silent
+nuclei -l "$OUTDIR/live/live.txt" -t ~/nuclei-templates/ -severity medium,high,critical -o "$OUTDIR/vulns/nuclei.txt" -silent 2>/dev/null
 
 # ---------------------- Reporting ---------------------- #
 echo -e "${BLUE}[✓] Generating Summary Report...${NC}"
@@ -127,9 +135,9 @@ echo "Recon Summary for: $DOMAIN" > "$OUTDIR/report/summary.txt"
 echo "Live Hosts: $(wc -l < "$OUTDIR/live/live.txt")" >> "$OUTDIR/report/summary.txt"
 echo "Total URLs: $(wc -l < "$OUTDIR/urls/all.txt")" >> "$OUTDIR/report/summary.txt"
 echo "Subdomains: $(wc -l < "$OUTDIR/subdomains/all.txt")" >> "$OUTDIR/report/summary.txt"
-echo "Ports Found: $(wc -l < "$OUTDIR/ports/naabu_ports.txt")" >> "$OUTDIR/report/summary.txt"
-echo "Potential Takeovers: $(grep -i 'vulnerable' "$OUTDIR/vulns/subzy_takeover.txt" | wc -l)" >> "$OUTDIR/report/summary.txt"
-echo "Nuclei Criticals: $(grep -i 'critical' "$OUTDIR/vulns/nuclei.txt" | wc -l)" >> "$OUTDIR/report/summary.txt"
+echo "Ports Found: $(wc -l < "$OUTDIR/ports/naabu_ports.txt" 2>/dev/null || echo 0)" >> "$OUTDIR/report/summary.txt"
+echo "Potential Takeovers: $(grep -i 'vulnerable' "$OUTDIR/vulns/subzy_takeover.txt" 2>/dev/null | wc -l)" >> "$OUTDIR/report/summary.txt"
+echo "Nuclei Criticals: $(grep -i 'critical' "$OUTDIR/vulns/nuclei.txt" 2>/dev/null | wc -l)" >> "$OUTDIR/report/summary.txt"
 
 # ---------------------- Archive ---------------------- #
 echo -e "${BLUE}[*] Zipping output...${NC}"
